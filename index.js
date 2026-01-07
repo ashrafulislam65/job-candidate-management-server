@@ -308,3 +308,86 @@ app.delete('/api/candidates/:id', verifyToken, verifyRole(['admin']), async (req
     res.status(500).send('Error deleting candidate');
   }
 });
+
+// 6. Schedule Interview - Admin/Staff Only
+app.post('/api/interviews', verifyToken, verifyRole(['admin', 'staff']), async (req, res) => {
+  try {
+    const { candidateId, date, time, type } = req.body; // type: Technical, HR, etc.
+    const { ObjectId } = require('mongodb');
+
+    if (!candidateId || !date || !time) {
+      return res.status(400).send('Missing required fields');
+    }
+
+    const interview = {
+      candidateId: new ObjectId(candidateId),
+      date,
+      time,
+      type: type || 'General',
+      status: 'Scheduled',
+      scheduledBy: req.user.uid,
+      createdAt: new Date()
+    };
+
+    const interviewsCollection = db.collection('interviews');
+    const result = await interviewsCollection.insertOne(interview);
+
+    // Optionally update candidate status
+    await db.collection('candidates').updateOne(
+      { _id: new ObjectId(candidateId) },
+      { $set: { status: 'Interview Scheduled' } }
+    );
+
+    res.status(201).json({ message: 'Interview scheduled', id: result.insertedId });
+
+  } catch (error) {
+    console.error('Schedule Error:', error);
+    res.status(500).send('Error scheduling interview');
+  }
+});
+
+// 7. View Interviews - Admin/Staff Only
+app.get('/api/interviews', verifyToken, verifyRole(['admin', 'staff']), async (req, res) => {
+  try {
+    const interviewsCollection = db.collection('interviews');
+    // Join with candidates to get candidate names
+    const interviews = await interviewsCollection.aggregate([
+      {
+        $lookup: {
+          from: 'candidates',
+          localField: 'candidateId',
+          foreignField: '_id',
+          as: 'candidate'
+        }
+      },
+      { $unwind: '$candidate' }, // Convert array to object
+      { $sort: { date: 1, time: 1 } } // Sort by upcoming
+    ]).toArray();
+
+    res.json(interviews);
+
+  } catch (error) {
+    console.error('Fetch Interviews Error:', error);
+    res.status(500).send('Error fetching interviews');
+  }
+});
+
+// 8. Update Interview Status - Admin/Staff Only
+app.put('/api/interviews/:id/status', verifyToken, verifyRole(['admin', 'staff']), async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { status } = req.body; // e.g., 'Completed', 'Cancelled'
+    const { ObjectId } = require('mongodb');
+
+    const result = await db.collection('interviews').updateOne(
+      { _id: new ObjectId(id) },
+      { $set: { status } }
+    );
+
+    if (result.matchedCount === 0) return res.status(404).send('Interview not found');
+    res.json({ message: 'Status updated' });
+
+  } catch (error) {
+    res.status(500).send('Error updating interview status');
+  }
+});
