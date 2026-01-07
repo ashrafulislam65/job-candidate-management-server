@@ -391,3 +391,25 @@ app.put('/api/interviews/:id/status', verifyToken, verifyRole(['admin', 'staff']
     res.status(500).send('Error updating interview status');
   }
 });
+
+// 9. Download Candidate Phone Numbers - Admin/Staff Only
+app.get('/api/candidates/download-phones', verifyToken, verifyRole(['admin', 'staff']), async (req, res) => {
+  try {
+    const candidatesCollection = db.collection('candidates');
+    // Projection to only get phone numbers
+    const candidates = await candidatesCollection.find({}, { projection: { phone: 1 } }).toArray();
+
+    // Extract numbers and join with newline
+    const phoneNumbers = candidates.map(c => c.phone).join('\n');
+
+    // Set headers for file download
+    res.setHeader('Content-Type', 'text/plain');
+    res.setHeader('Content-Disposition', 'attachment; filename="phones.txt"');
+
+    res.send(phoneNumbers);
+
+  } catch (error) {
+    console.error('Download Error:', error);
+    res.status(500).send('Error generating phone list');
+  }
+});
