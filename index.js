@@ -263,3 +263,48 @@ app.get('/api/candidates/me', verifyToken, verifyRole(['candidate']), async (req
     res.status(500).send('Error fetching profile');
   }
 });
+
+// 4. Edit Candidate - Admin Only
+app.put('/api/candidates/:id', verifyToken, verifyRole(['admin']), async (req, res) => {
+  try {
+    const { id } = req.params;
+    const updates = req.body;
+    const { ObjectId } = require('mongodb');
+
+    // Prevent updating immutable fields if necessary (optional)
+    delete updates._id;
+    delete updates.email; // Usually bad to change email as it's identity
+
+    const candidatesCollection = db.collection('candidates');
+    const result = await candidatesCollection.findOneAndUpdate(
+      { _id: new ObjectId(id) },
+      { $set: updates },
+      { returnDocument: 'after' }
+    );
+
+    if (!result) return res.status(404).send('Candidate not found');
+    res.json(result);
+
+  } catch (error) {
+    console.error('Update Error:', error);
+    res.status(500).send('Error updating candidate');
+  }
+});
+
+// 5. Delete Candidate - Admin Only
+app.delete('/api/candidates/:id', verifyToken, verifyRole(['admin']), async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { ObjectId } = require('mongodb');
+
+    const candidatesCollection = db.collection('candidates');
+    const result = await candidatesCollection.deleteOne({ _id: new ObjectId(id) });
+
+    if (result.deletedCount === 0) return res.status(404).send('Candidate not found');
+    res.json({ message: 'Candidate deleted' });
+
+  } catch (error) {
+    console.error('Delete Error:', error);
+    res.status(500).send('Error deleting candidate');
+  }
+});
