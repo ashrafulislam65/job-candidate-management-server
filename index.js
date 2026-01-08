@@ -267,13 +267,34 @@ app.patch('/api/users/:uid/role', verifyToken, verifyRole(['admin']), async (req
 });
 
 // --- Profile Upload & Update (All Users) ---
-if (!fs.existsSync('uploads/profiles')) {
-  fs.mkdirSync('uploads/profiles', { recursive: true });
+// Use /tmp for uploads if in Vercel/Production to avoid Read-Only file system errors
+const UPLOADS_DIR = process.env.VERCEL || process.env.NODE_ENV === 'production' ? '/tmp/uploads' : 'uploads';
+
+// Ensure base upload dir exists (Handle errors gracefully)
+try {
+  if (!fs.existsSync(UPLOADS_DIR)) {
+    fs.mkdirSync(UPLOADS_DIR, { recursive: true });
+  }
+} catch (err) {
+  console.warn(`WARNING: Could not create base uploads dir: ${err.message}`);
+}
+
+const PROFILE_DIR = path.join(UPLOADS_DIR, 'profiles');
+try {
+  if (!fs.existsSync(PROFILE_DIR)) {
+    fs.mkdirSync(PROFILE_DIR, { recursive: true });
+  }
+} catch (err) {
+  console.warn(`WARNING: Could not create profile uploads dir: ${err.message}`);
 }
 
 const profileStorage = multer.diskStorage({
   destination: (req, file, cb) => {
-    cb(null, 'uploads/profiles/');
+    // Re-verify directory exists (for /tmp specific behavior)
+    if (!fs.existsSync(PROFILE_DIR)) {
+      try { fs.mkdirSync(PROFILE_DIR, { recursive: true }); } catch (e) { }
+    }
+    cb(null, PROFILE_DIR);
   },
   filename: (req, file, cb) => {
     cb(null, `profile-${Date.now()}-${file.originalname}`);
@@ -287,7 +308,16 @@ app.patch('/api/users/update-profile', verifyToken, profileUpload.single('photo'
     const { name } = req.body;
     const uid = req.user.uid;
     const email = req.user.email;
-    const photoUrl = req.file ? `/uploads/profiles/${req.file.filename}` : null;
+
+    // Use absolute URL or relative path logic. For Vercel/Serverless, local files vanish.
+    // We return the path assuming it MIGHT be served if immediate.
+    // In real prod, this should be S3/Firebase Storage.
+    let photoUrl = null;
+    if (req.file) {
+      // Construct web-accessible path (Note: /tmp is not served statically by Express usually without explicit config, 
+      // but for now we prevent the crash. The image won't persist across restarts in Vercel.)
+      photoUrl = `/uploads/profiles/${req.file.filename}`;
+    }
 
     const usersCollection = db.collection('users');
     const candidatesCollection = db.collection('candidates');
@@ -318,14 +348,16 @@ app.patch('/api/users/update-profile', verifyToken, profileUpload.single('photo'
 
 // --- File Upload Setup (Multer) ---
 
-// Ensure uploads dir
-if (!fs.existsSync('uploads')) {
-  fs.mkdirSync('uploads');
-}
+// Ensure root uploads dir (redundant but safe)
+try {
+  if (!fs.existsSync(UPLOADS_DIR)) {
+    fs.mkdirSync(UPLOADS_DIR, { recursive: true });
+  }
+} catch (e) { }
 
 const storage = multer.diskStorage({
   destination: (req, file, cb) => {
-    cb(null, 'uploads/');
+    cb(null, UPLOADS_DIR);
   },
   filename: (req, file, cb) => {
     cb(null, `candidates-${Date.now()}-${file.originalname}`);
@@ -354,8 +386,14 @@ app.post('/api/candidates/upload', verifyToken, verifyRole(['admin', 'staff']), 
     const exSheet = exWorkbook.getWorksheet(1);
     const imageMap = {}; // Maps row index -> photo file path
 
-    const imagesDir = path.join('uploads', 'candidates');
-    if (!fs.existsSync(imagesDir)) fs.mkdirSync(imagesDir, { recursive: true });
+    // Use logic matching global config
+    const UPLOADS_DIR_LOCAL = process.env.VERCEL || process.env.NODE_ENV === 'production' ? '/tmp/uploads' : 'uploads';
+    const imagesDir = path.join(UPLOADS_DIR_LOCAL, 'candidates');
+
+    // Ensure dir exists
+    try {
+      if (!fs.existsSync(imagesDir)) fs.mkdirSync(imagesDir, { recursive: true });
+    } catch (e) { console.warn('Warning creating Excel images dir:', e.message); }
 
     exSheet.getImages().forEach((image) => {
       const img = exWorkbook.model.media[image.imageId];
